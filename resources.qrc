@@ -1,0 +1,21 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="icons">
+        <file alias="about.svg">finch/resources/icons/about.svg</file>
+        <file alias="close.svg">finch/resources/icons/close.svg</file>
+        <file alias="credentials.svg">finch/resources/icons/credentials.svg</file>
+        <file alias="download.svg">finch/resources/icons/download.svg</file>
+        <file alias="globe.svg">finch/resources/icons/globe.svg</file>
+        <file alias="icon.svg">finch/resources/icons/icon.svg</file>
+        <file alias="icon.png">finch/resources/icons/icon.png</file>
+        <file alias="new-credential.svg">finch/resources/icons/new-credential.svg</file>
+        <file alias="new-folder.svg">finch/resources/icons/new-folder.svg</file>
+        <file alias="plus.svg">finch/resources/icons/plus.svg</file>
+        <file alias="refresh.svg">finch/resources/icons/refresh.svg</file>
+        <file alias="search.svg">finch/resources/icons/search.svg</file>
+        <file alias="settings.svg">finch/resources/icons/settings.svg</file>
+        <file alias="tools.svg">finch/resources/icons/tools.svg</file>
+        <file alias="trash.svg">finch/resources/icons/trash.svg</file>
+        <file alias="upload.svg">finch/resources/icons/upload.svg</file>
+    </qresource>
+</RCC> 

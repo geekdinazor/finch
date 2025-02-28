@@ -1,8 +1,8 @@
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QIcon, QFont
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QDesktopWidget
+from PyQt5.QtWidgets import QVBoxLayout, QWidget, QLabel
 
-from finch.common import center_window, resource_path
+from finch.utils.ui import center_window
 
 
 class AboutWindow(QWidget):
@@ -16,7 +16,7 @@ class AboutWindow(QWidget):
         layout.setAlignment(Qt.AlignTop)
         self.setLayout(layout)
 
-        icon = QIcon(resource_path("img/icon.png")).pixmap(QSize(100, 100))
+        icon = QIcon(":/icons/icon.png").pixmap(QSize(100, 100))
         icon_label = QLabel()
         icon_label.setPixmap(icon)
         icon_label.setAlignment(Qt.AlignCenter)
