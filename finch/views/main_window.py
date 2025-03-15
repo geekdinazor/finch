@@ -1,7 +1,7 @@
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QComboBox,
-    QHBoxLayout, QApplication
+    QHBoxLayout, QApplication, QAction
 )
 
 from finch.services.s3_service import S3Service
@@ -11,6 +11,7 @@ from finch.views.error import show_error_dialog
 from finch.views.toolbars import init_main_toolbars
 from finch.widgets.file_tree_widget import S3TreeViewFactory
 from finch.widgets.progress_indicator import QProgressIndicator
+from finch.widgets.settings_dialog import SettingsDialog
 
 
 class MainWindow(QMainWindow):
@@ -37,6 +38,9 @@ class MainWindow(QMainWindow):
         self.main_layout.setAlignment(Qt.AlignTop)
         self.main_widget.setLayout(self.main_layout)
         self.setCentralWidget(self.main_widget)
+
+        # Connect cleanup to application quit signal
+        QApplication.instance().aboutToQuit.connect(self.cleanup)
 
         self.setup_ui()
 
@@ -166,4 +170,36 @@ class MainWindow(QMainWindow):
         # Init toolbars
         init_main_toolbars(self)
         self._fill_credentials()
+
+        # Add settings action to menu
+        menubar = self.menuBar()
+        settings_menu = menubar.addMenu('Settings')
+        
+        settings_action = QAction('Preferences', self)
+        settings_action.setShortcut('Ctrl+,')
+        settings_action.triggered.connect(self.show_settings)
+        settings_menu.addAction(settings_action)
+
+    def show_settings(self):
+        """Show settings dialog"""
+        dialog = SettingsDialog(self)
+        dialog.exec_()
+
+    def cleanup(self):
+        """Clean up resources before closing"""
+        if hasattr(self, 's3_tree') and self.s3_tree:
+            try:
+                if hasattr(self.s3_tree, 'model') and self.s3_tree.model:
+                    self.s3_tree.model._cleanup_worker()
+                    self.s3_tree.model._cleanup_checkers()
+            except:
+                pass  # Ignore cleanup errors
+
+    def closeEvent(self, event):
+        """Handle window close event"""
+        try:
+            self.cleanup()
+        except:
+            pass  # Ensure window closes even if cleanup fails
+        super().closeEvent(event)
 

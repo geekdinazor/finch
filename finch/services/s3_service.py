@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List
+from threading import local
 
 import boto3
 import keyring
@@ -25,29 +26,44 @@ class S3Object:
 class S3Service:
     def __init__(self):
         self.s3_session = boto3.session.Session()
-        self.s3_resource = None
+        self._thread_local = local()  # Thread-local storage
+        self._credentials = None
 
     def set_credential(self, credential):
         if not credential:
             raise Exception("Invalid credential data")
             
         try:
-            self.s3_resource = boto3.resource('s3',
-                                         endpoint_url=credential.get('endpoint'),
-                                         aws_access_key_id=credential.get('access_key'),
-                                         aws_secret_access_key=keyring.get_password(
-                                             f'{slugify(credential["name"])}@finch',
-                                             credential.get('access_key')
-                                         ),
-                                         region_name=credential.get('region'),
-                                         use_ssl = credential.get('use_ssl'),
-                                         verify=credential.get('verify_ssl')
-                                         )
+            # Store credentials for thread-local clients
+            self._credentials = {
+                'endpoint_url': credential.get('endpoint'),
+                'aws_access_key_id': credential.get('access_key'),
+                'aws_secret_access_key': keyring.get_password(
+                    f'{slugify(credential["name"])}@finch',
+                    credential.get('access_key')
+                ),
+                'region_name': credential.get('region'),
+                'use_ssl': credential.get('use_ssl'),
+                'verify': credential.get('verify_ssl')
+            }
+            
+            # Create main thread client
+            self.s3_resource = boto3.resource('s3', **self._credentials)
             # Test the connection
             self.s3_resource.meta.client.list_buckets()
         except Exception as e:
             self.s3_resource = None
+            self._credentials = None
             raise Exception(f"Failed to configure S3 service: {str(e)}")
+
+    @property
+    def client(self):
+        """Get thread-local client"""
+        if not hasattr(self._thread_local, 'client'):
+            if not self._credentials:
+                raise Exception("S3 service not configured")
+            self._thread_local.client = boto3.client('s3', **self._credentials)
+        return self._thread_local.client
 
     def list_buckets(self):
         try:
@@ -68,7 +84,8 @@ class S3Service:
     def list_objects(self, bucket: str, prefix: str = "", max_keys: int = None) -> List[S3Object]:
         """List objects in a bucket with prefix"""
         try:
-            paginator = self.s3_resource.meta.client.get_paginator('list_objects_v2')
+            # Use thread-local client
+            paginator = self.client.get_paginator('list_objects_v2')
             
             # Add MaxKeys if specified
             paginate_config = {'Bucket': bucket, 'Prefix': prefix, 'Delimiter': '/'}

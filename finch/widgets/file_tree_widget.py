@@ -51,6 +51,8 @@ class S3TreeView(QTreeView):
         """Setup the tree view with an S3 service"""
         self._s3_service = s3_service
         self._safe_initialize_model()
+        if self.model:
+            self.model.tree_view = self  # Give model access to view
 
     def _setup_ui(self):
         """Configure the tree view"""
@@ -231,10 +233,43 @@ class S3TreeView(QTreeView):
 
     def _handle_expansion(self, index):
         """Handle item expansion"""
-        if self.model and hasattr(self.model, 'canFetchMore'):
-            if self.model.canFetchMore(index):
-                self.loading_started.emit()  # Emit before fetching
-                self.model.fetchMore(index)
+        if not self.model:
+            return
+        
+        node = self.model.get_node(index)
+        if not node:
+            return
+        
+        # If node already has children, no need to check or fetch
+        if len(node.children) > 0:
+            return
+        
+        # If node is not a bucket or folder, nothing to do
+        if node.type not in (ObjectType.BUCKET, ObjectType.FOLDER):
+            return
+        
+        # Start loading
+        self.loading_started.emit()
+        
+        # If we know it has no children, collapse it back
+        node_id = id(node)
+        if node_id in self.model._has_children_cache:
+            if not self.model._has_children_cache[node_id]:
+                self.collapse(index)
+                return
+        
+        # Directly fetch children without checking
+        self.model._fetch_children(node, index)
+
+    def collapse(self, index):
+        """Override collapse to handle empty nodes"""
+        super().collapse(index)
+        # Force a visual update
+        if self.model:
+            self.model.dataChanged.emit(
+                index,
+                self.model.index(index.row(), self.model.columnCount(index.parent())-1, index.parent())
+            )
 
     def _on_item_expanded(self, index):
         """Debug handler for item expansion"""

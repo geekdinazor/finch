@@ -19,6 +19,7 @@ from finch.views.credentials import ManageCredentialsWindow
 if TYPE_CHECKING:
     from finch.views.main_window import MainWindow
 
+
 class CredentialsToolbar(QToolBar):
     def __init__(self, parent):
         super().__init__("Credentials", parent)
@@ -37,10 +38,11 @@ class CredentialsToolbar(QToolBar):
         self.parent.manage_credential_window.window_closed.connect(
             functools.partial(self.parent._fill_credentials, self.parent.credential_selector.currentIndex()))
         self.parent.manage_credential_window.show()
-        
-class AboutToolbar(QToolBar):
+
+
+class SettingsToolbar(QToolBar):
     def __init__(self, parent):
-        super().__init__("About", parent)
+        super().__init__("Settings", parent)
         self.parent = parent  # Reference to main window
         self.init_ui()
 
@@ -48,15 +50,21 @@ class AboutToolbar(QToolBar):
         self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.show_settings_action = QAction("Settings", self)
+        self.show_settings_action.setIcon(QIcon(':/icons/settings.svg'))
+        self.show_settings_action.triggered.connect(self.show_about_window)
         self.show_about_action = QAction("About", self)
         self.show_about_action.setIcon(QIcon(':/icons/about.svg'))
         self.show_about_action.triggered.connect(self.show_about_window)
         self.addWidget(spacer)
+        self.addAction(self.show_settings_action)
         self.addAction(self.show_about_action)
+
 
     def show_about_window(self):
         self.parent.about_window = AboutWindow()
         self.parent.about_window.show()
+
 
 class FileToolbar(QToolBar):
     def __init__(self, parent):
@@ -76,7 +84,7 @@ class FileToolbar(QToolBar):
         # Dictionary to hold QAction references for dynamic updates
         self.actions_dict = {}
         self.init_ui()
-        
+
         # Set initial state
         self.update_all_actions({
             "Upload": False,
@@ -107,18 +115,18 @@ class FileToolbar(QToolBar):
             })
         elif node.type == ObjectType.BUCKET:
             self.update_all_actions({
-                "Upload": True,   # Can upload to bucket
-                "Create": True,   # Can create folder in bucket
-                "Delete": True,   # Can delete bucket
-                "Download": False, # Can't download bucket
+                "Upload": True,  # Can upload to bucket
+                "Create": True,  # Can create folder in bucket
+                "Delete": True,  # Can delete bucket
+                "Download": False,  # Can't download bucket
                 "Refresh": True,
                 "Search": True
             })
         elif node.type == ObjectType.FOLDER:
             self.update_all_actions({
-                "Upload": True,   # Can upload to folder
-                "Create": True,   # Can create subfolder
-                "Delete": True,   # Can delete folder
+                "Upload": True,  # Can upload to folder
+                "Create": True,  # Can create subfolder
+                "Delete": True,  # Can delete folder
                 "Download": False,  # Can't download folder
                 "Refresh": True,
                 "Search": True
@@ -127,7 +135,7 @@ class FileToolbar(QToolBar):
             self.update_all_actions({
                 "Upload": False,  # Can't upload to file
                 "Create": False,  # Can't create in file
-                "Delete": True,   # Can delete file
+                "Delete": True,  # Can delete file
                 "Download": True,  # Can download file
                 "Refresh": True,
                 "Search": True
@@ -175,15 +183,11 @@ class FileToolbar(QToolBar):
         for action_name, status in enable_map.items():
             self.set_action_enabled(action_name, status)
 
-    
-
 
 def init_main_toolbars(window: "MainWindow") -> None:
     window.credentials_toolbar = CredentialsToolbar(window)
     window.file_toolbar = FileToolbar(window)
-    window.about_toolbar = AboutToolbar(window)
+    window.about_toolbar = SettingsToolbar(window)
     window.addToolBar(window.credentials_toolbar)
     window.addToolBar(window.file_toolbar)
     window.addToolBar(window.about_toolbar)
-
-

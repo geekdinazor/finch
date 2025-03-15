@@ -1,15 +1,18 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Any, List
+import uuid
 
 from PyQt5.QtCore import (
     Qt, QAbstractItemModel, QModelIndex,
-    QVariant, pyqtSignal, QThread
+    QVariant, pyqtSignal, QThread, QRunnable, QThreadPool, QMetaObject, QObject, pyqtSlot, QMutex, QWaitCondition, QMutexLocker, Q_ARG
 )
 from PyQt5.QtWidgets import QStyle, QApplication
+from PyQt5 import QtCore
 
 from finch.services.s3_service import S3Object, ObjectType
 from finch.utils.strings import format_datetime, format_size
+from finch.config import CHECK_FOLDER_CONTENTS
 
 
 @dataclass
@@ -19,6 +22,7 @@ class S3Node(S3Object):
     parent: Optional['S3Node'] = None
     children: List['S3Node'] = field(default_factory=list)
     is_loaded: bool = False
+    node_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # Unique ID for each node
 
     def can_fetch_more(self) -> bool:
         """Check if this node can fetch more children"""
@@ -53,6 +57,11 @@ class S3ObjectLoaderThread(QThread):
             items.append(item)
         return items
 
+    def stop(self):
+        """Safely stop the thread"""
+        self._is_running = False
+        self.wait()  # Wait for thread to finish
+
     def run(self):
         if self._is_running:
             return
@@ -61,53 +70,115 @@ class S3ObjectLoaderThread(QThread):
         try:
             if self._bucket is None:
                 # Load buckets in thread
-                items = self._s3_service.list_buckets()
-                nodes = [self._create_node(item, self._parent_node) for item in items]
+                if self._is_running:  # Check if still running
+                    items = self._s3_service.list_buckets()
+                    if self._is_running:  # Check again before processing
+                        nodes = [self._create_node(item, self._parent_node) for item in items]
             else:
                 # Load objects in thread
                 items = self._list_objects()  # This runs in the worker thread
-                nodes = [self._create_node(item, self._parent_node) for item in items]
+                if self._is_running:
+                    nodes = [self._create_node(item, self._parent_node) for item in items]
 
             if self._is_running:
                 self.finished.emit(nodes)
                 
         except Exception as e:
-            self.error.emit(str(e))
+            if self._is_running:
+                self.error.emit(str(e))
         finally:
             self._is_running = False
 
 
-class ChildrenCheckerThread(QThread):
-    finished = pyqtSignal(bool)
-    
-    def __init__(self, s3_service, node):
+class S3ChildrenCheckerWorker(QRunnable):
+    def __init__(self, s3_service, node_id, node, callback):
         super().__init__()
         self._s3_service = s3_service
+        self._node_id = node_id
         self._node = node
+        self._callback = callback
+        self._is_running = True
+        
+    def stop(self):
         self._is_running = False
         
     def run(self):
-        self._is_running = True
         try:
-            # For buckets, check first object
+            if not self._is_running:
+                return
+                
+            # Use thread-local client
+            client = self._s3_service.client
+            
+            has_children = False
             if self._node.type == ObjectType.BUCKET:
-                objects = self._s3_service.list_objects(self._node.name, prefix="", max_keys=1)
-            # For folders, check first object in folder
+                response = client.list_objects_v2(
+                    Bucket=self._node.name,
+                    MaxKeys=1,
+                    Delimiter='/'
+                )
+                has_children = ('Contents' in response or 'CommonPrefixes' in response)
             else:
-                objects = self._s3_service.list_objects(self._node.bucket, prefix=f"{self._node.key}/", max_keys=1)
+                # For folders, we need to check beyond the folder marker
+                response = client.list_objects_v2(
+                    Bucket=self._node.bucket,
+                    Prefix=f"{self._node.key}/",
+                    MaxKeys=2,  # Get one more to look past the folder marker
+                    Delimiter='/'
+                )
+                
+                has_children = False
+                if 'Contents' in response:
+                    # Check for any files beyond the folder marker
+                    for obj in response['Contents']:
+                        if obj['Key'] != f"{self._node.key}/":  # Skip folder marker
+                            has_children = True
+                            break
+                
+                # Also check for subfolders
+                if 'CommonPrefixes' in response:
+                    has_children = True
+                
+                # If we only found the folder marker and nothing else
+                if len(response.get('Contents', [])) == 1 and not response.get('CommonPrefixes'):
+                    only_obj = response['Contents'][0]
+                    if only_obj['Key'] == f"{self._node.key}/":
+                        has_children = False
             
-            # If we got any objects, this node has children
-            has_children = next(objects, None) is not None
             if self._is_running:
-                self.finished.emit(has_children)
-        except Exception:
+                QMetaObject.invokeMethod(self._callback, 
+                                       "handle_result",
+                                       QtCore.Qt.QueuedConnection,
+                                       QtCore.Q_ARG(str, self._node_id),
+                                       QtCore.Q_ARG(bool, has_children))
+        except Exception as e:
+            print(f"Error checking children: {str(e)}")
             if self._is_running:
-                self.finished.emit(False)
-        finally:
-            self._is_running = False
-            
+                QMetaObject.invokeMethod(self._callback,
+                                       "handle_error",
+                                       QtCore.Qt.QueuedConnection,
+                                       QtCore.Q_ARG(str, self._node_id))
+
+
+class S3ChildrenCheckerCallback(QObject):
+    finished = pyqtSignal(str, bool)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._active = True
+    
     def stop(self):
-        self._is_running = False
+        self._active = False
+    
+    @pyqtSlot(str, bool)
+    def handle_result(self, node_id, has_children):
+        if self._active:
+            self.finished.emit(node_id, has_children)
+        
+    @pyqtSlot(str)
+    def handle_error(self, node_id):
+        if self._active:
+            self.finished.emit(node_id, False)
 
 
 class S3FileTreeModel(QAbstractItemModel):
@@ -121,6 +192,8 @@ class S3FileTreeModel(QAbstractItemModel):
     def __init__(self, parent=None, s3_service=None):
         super().__init__(parent)
         self._s3_service = s3_service
+        self._thread_pool = QThreadPool()
+        self._thread_pool.setMaxThreadCount(4)  # Limit concurrent threads
         
         self.root = S3Node(
             name="",
@@ -130,8 +203,12 @@ class S3FileTreeModel(QAbstractItemModel):
         
         self._setup_icons()
         self._current_worker = None
-        self._children_checkers = {}  # Store checkers by node
-        self._has_children_cache = {}  # Cache results
+        self._has_children_cache = {}
+        self._checking_nodes = set()
+        self._checker_callback = S3ChildrenCheckerCallback(self)
+        self._checker_callback.finished.connect(self._on_children_checked)
+        self._active_checkers = {}
+        self._node_map = {}  # Add node map to track nodes by ID
 
     def _setup_icons(self):
         """Setup model icons"""
@@ -163,6 +240,7 @@ class S3FileTreeModel(QAbstractItemModel):
         """Clean up current worker thread"""
         if self._current_worker:
             try:
+                self._current_worker.stop()  # Use new stop method
                 self._current_worker.finished.disconnect()
                 self._current_worker.error.disconnect()
                 self._current_worker.quit()
@@ -204,33 +282,23 @@ class S3FileTreeModel(QAbstractItemModel):
             self.loading_finished.emit()
             self.endResetModel()
 
-    def _on_nodes_loaded(self, nodes: List[S3Node], parent_node: S3Node, parent_index: QModelIndex) -> None:
+    def _on_nodes_loaded(self, nodes, parent_node, parent_index):
         """Handle loaded nodes"""
         try:
-            self.beginInsertRows(parent_index, 0, len(nodes) - 1)
-            
-            # Clear existing children if any
-            parent_node.children.clear()
-            
-            # Add new nodes, avoiding duplicates
+            # Store nodes in map
             for node in nodes:
-                # Check if node already exists
-                exists = False
-                for existing in parent_node.children:
-                    if existing.name == node.name and existing.type == node.type:
-                        exists = True
-                        break
+                self._node_map[node.node_id] = node
                 
-                if not exists:
-                    node.parent = parent_node
-                    parent_node.children.append(node)
-            
+            # Rest of the loading code...
+            self.beginInsertRows(parent_index, 0, len(nodes) - 1)
+            parent_node.children = nodes
             parent_node.is_loaded = True
             self.endInsertRows()
+            
             self.loading_finished.emit()
             
         except Exception as e:
-            self.error_occurred.emit(f"Failed to process loaded nodes: {str(e)}")
+            self.error_occurred.emit(str(e))
             self.loading_finished.emit()
 
     def _fetch_children(self, parent_node: S3Node, parent_index: QModelIndex) -> None:
@@ -275,6 +343,16 @@ class S3FileTreeModel(QAbstractItemModel):
             return False
 
         node = self.get_node(parent)
+        node_id = node.node_id
+        
+        # If we're still checking for children, wait
+        if node_id in self._checking_nodes:
+            return False
+            
+        # If we know it has no children from cache, don't fetch
+        if node_id in self._has_children_cache and not self._has_children_cache[node_id]:
+            return False
+            
         return node.can_fetch_more()
 
     def fetchMore(self, parent: QModelIndex) -> None:
@@ -283,15 +361,25 @@ class S3FileTreeModel(QAbstractItemModel):
             return
 
         node = self.get_node(parent)
+        node_id = node.node_id
+        
+        # If we're still checking for children, don't fetch yet
+        if node_id in self._checking_nodes:
+            return
+            
+        # If we know it has no children from cache, don't fetch
+        if node_id in self._has_children_cache and not self._has_children_cache[node_id]:
+            return
+            
         if not node.can_fetch_more():
             return
 
         try:
-            self.loading_started.emit()  # Emit before starting to load
+            self.loading_started.emit()
             self._fetch_children(node, parent)
         except Exception as e:
             self.error_occurred.emit(f"Failed to fetch contents: {str(e)}")
-            self.loading_finished.emit()  # Emit on error
+            self.loading_finished.emit()
 
     def get_node(self, index: QModelIndex) -> Optional[S3Node]:
         """Get S3Node from model index"""
@@ -410,22 +498,54 @@ class S3FileTreeModel(QAbstractItemModel):
         self.layoutChanged.emit()
 
     def _cleanup_checkers(self):
-        """Clean up all children checker threads"""
-        for checker in self._children_checkers.values():
+        """Clean up all checker threads"""
+        # Stop all active checkers
+        for checker in self._active_checkers.values():
+            checker.stop()
+            
+        self._thread_pool.clear()
+        self._thread_pool.waitForDone(100)
+        
+        self._active_checkers.clear()
+        self._has_children_cache.clear()
+        self._checking_nodes.clear()
+        
+        # Only delete callback if it exists and hasn't been deleted
+        if hasattr(self, '_checker_callback') and not self._checker_callback.parent():
             try:
-                checker.stop()
-                checker.finished.disconnect()
-                checker.quit()
-                checker.wait(1000)  # Wait up to 1 second
-                checker.deleteLater()
-            except:
-                pass
-        self._children_checkers.clear()
+                self._checker_callback.deleteLater()
+            except RuntimeError:
+                pass  # Object already deleted
+        self._checker_callback = None
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlags:
+        """Return item flags for the given index"""
+        if not index.isValid():
+            return Qt.NoItemFlags
+
+        node = self.get_node(index)
+        node_id = node.node_id
+        
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        
+        # Only allow expansion for nodes that can have children
+        if node.type in (ObjectType.BUCKET, ObjectType.FOLDER):
+            if CHECK_FOLDER_CONTENTS:
+                # Check cache first
+                if node_id in self._has_children_cache:
+                    if self._has_children_cache[node_id]:
+                        flags |= Qt.ItemIsDropEnabled
+                elif not node.is_loaded:  # Not checked yet
+                    flags |= Qt.ItemIsDropEnabled
+            else:
+                # If content checking is disabled, all folders are expandable
+                flags |= Qt.ItemIsDropEnabled
+        
+        return flags
 
     def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
-        """Check if the index can have children"""
         if not parent.isValid():
-            return True  # Root can have children
+            return True
         
         node = self.get_node(parent)
         
@@ -433,50 +553,87 @@ class S3FileTreeModel(QAbstractItemModel):
         if len(node.children) > 0:
             return True
         
-        # Check cache first
-        node_id = id(node)
-        if node_id in self._has_children_cache:
-            return self._has_children_cache[node_id]
+        # If content checking is disabled, assume all folders/buckets have children
+        if not CHECK_FOLDER_CONTENTS:
+            return node.type in (ObjectType.BUCKET, ObjectType.FOLDER)
         
-        # If we haven't loaded yet and it's a bucket or folder
+        # Check cache first
+        if node.node_id in self._has_children_cache:
+            return self._has_children_cache[node.node_id]
+        
+        # Only check for children if it's a bucket or folder
         if not node.is_loaded and node.type in (ObjectType.BUCKET, ObjectType.FOLDER):
-            # Clean up any existing checker for this node
-            if node_id in self._children_checkers:
-                old_checker = self._children_checkers[node_id]
-                old_checker.stop()
-                old_checker.finished.disconnect()
-                old_checker.quit()
-                old_checker.wait(1000)
-                old_checker.deleteLater()
+            if node.node_id not in self._checking_nodes:
+                self._checking_nodes.add(node.node_id)
+                
+                # Create and start worker
+                worker = S3ChildrenCheckerWorker(self._s3_service, node.node_id, node, self._checker_callback)
+                self._active_checkers[node.node_id] = worker
+                self._thread_pool.start(worker)
             
-            # Start background check if not already running
-            checker = ChildrenCheckerThread(self._s3_service, node)
-            checker.finished.connect(lambda has_children: self._on_children_checked(node_id, has_children))
-            self._children_checkers[node_id] = checker
-            checker.start()
-            
-            # Return True while checking to show expand arrow
+            # Return True while checking
             return True
-            
+        
         return False
 
     def _on_children_checked(self, node_id, has_children):
         """Handle completion of children check"""
-        # Cache the result
-        self._has_children_cache[node_id] = has_children
-        
-        # Clean up the checker
-        if node_id in self._children_checkers:
-            checker = self._children_checkers[node_id]
-            checker.stop()
-            checker.finished.disconnect()
-            checker.quit()
-            checker.wait(1000)
-            checker.deleteLater()
-            del self._children_checkers[node_id]
-        
-        # Emit dataChanged to update the view
-        self.layoutChanged.emit()
+        try:
+            self._has_children_cache[node_id] = has_children
+            self._checking_nodes.discard(node_id)
+            
+            # Clean up the checker
+            if node_id in self._active_checkers:
+                del self._active_checkers[node_id]
+            
+            # Get node from map
+            node = self._node_map.get(node_id)
+            if node:
+                # Find the node's index
+                parent = node.parent or self.root
+                row = parent.children.index(node)
+                
+                # Create indexes - parent_index is based on parent's parent
+                if parent == self.root:
+                    parent_index = QModelIndex()
+                else:
+                    grandparent = parent.parent or self.root
+                    parent_row = grandparent.children.index(parent)
+                    parent_index = self.createIndex(parent_row, 0, parent)
+                    
+                node_index = self.createIndex(row, 0, node)
+                
+                if not has_children:
+                    # Mark as loaded to prevent further checks
+                    node.is_loaded = True
+                    
+                    # If expanded, collapse it
+                    if hasattr(self, 'tree_view'):
+                        self.tree_view.collapse(node_index)
+                        # Force the view to refresh this item
+                        self.tree_view.update(node_index)
+                
+                # Emit dataChanged for this node to update its appearance
+                self.dataChanged.emit(
+                    node_index,
+                    self.index(node_index.row(), self.columnCount(parent_index)-1, parent_index)
+                )
+                
+                # Force layout update
+                self.layoutChanged.emit()
+                
+                # If node is expanded and has children, fetch them
+                if has_children and hasattr(self, 'tree_view') and self.tree_view.isExpanded(node_index):
+                    self._fetch_children(node, node_index)
+            
+        except Exception as e:
+            print(f"Error in _on_children_checked: {str(e)}")
+
+    def isExpanded(self, index):
+        """Check if index is expanded in the view"""
+        if hasattr(self, 'tree_view'):
+            return self.tree_view.isExpanded(index)
+        return False
 
     def _on_load_error(self, error_msg: str):
         """Handle load errors"""
@@ -494,20 +651,11 @@ class S3FileTreeModel(QAbstractItemModel):
             # Clear children and cache
             node.children = []
             node.is_loaded = False
-            node_id = id(node)
+            node_id = node.node_id
             
             # Clean up any existing checker
-            if node_id in self._children_checkers:
-                checker = self._children_checkers[node_id]
-                checker.stop()
-                checker.finished.disconnect()
-                checker.quit()
-                checker.wait(1000)
-                checker.deleteLater()
-                del self._children_checkers[node_id]
-                
-            if node_id in self._has_children_cache:
-                del self._has_children_cache[node_id]
+            if node_id in self._checking_nodes:
+                self._checking_nodes.discard(node_id)
 
     def removeRow(self, row, parent=None):
         """Remove a row from the model"""
@@ -574,4 +722,8 @@ class S3FileTreeModel(QAbstractItemModel):
 
     def __del__(self):
         """Clean up when model is destroyed"""
-        self._cleanup_checkers()
+        try:
+            self._cleanup_checkers()
+            self._cleanup_worker()
+        except:
+            pass  # Ignore cleanup errors during destruction
