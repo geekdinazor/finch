@@ -137,13 +137,35 @@ QTableView::item:selected {
     color: #ffffff;
 }
 
-QTreeView::item:hover,
-QListWidget::item:hover,
-QTableView::item:hover {
+QTreeView::item:hover:!selected,
+QListWidget::item:hover:!selected,
+QTableView::item:hover:!selected {
     background-color: #303030;
 }
 
-QTreeView::branch:selected { background-color: #2a82da; }
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {
+    image: url({arrow_right});
+}
+
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings {
+    image: url({arrow_down});
+}
+
+QTreeView::branch:has-children:!has-siblings:closed:selected,
+QTreeView::branch:closed:has-children:has-siblings:selected {
+    image: url({arrow_right_selected});
+    background-color: #2a82da;
+}
+
+QTreeView::branch:open:has-children:!has-siblings:selected,
+QTreeView::branch:open:has-children:has-siblings:selected {
+    image: url({arrow_down_selected});
+    background-color: #2a82da;
+}
+
+QTreeView::branch:!has-children:selected { background-color: #2a82da; }
 
 QHeaderView::section {
     background-color: #2d2d2d;

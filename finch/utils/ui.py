@@ -22,7 +22,7 @@ def apply_theme(app):
         palette.setColor(QPalette.BrightText, Qt.red)
         palette.setColor(QPalette.Link, QColor(42, 130, 218))
         palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.HighlightedText, QColor(35, 35, 35))
+        palette.setColor(QPalette.HighlightedText, Qt.white)
         palette.setColor(QPalette.Active, QPalette.Button, QColor(53, 53, 53))
         palette.setColor(QPalette.Disabled, QPalette.ButtonText, Qt.darkGray)
         palette.setColor(QPalette.Disabled, QPalette.WindowText, Qt.darkGray)
@@ -33,7 +33,12 @@ def apply_theme(app):
     qss_path = resource_path("img/theme.qss")
     try:
         with open(qss_path) as f:
-            app.setStyleSheet(f.read())
+            qss = f.read()
+        qss = qss.replace("{arrow_right}", resource_path("img/arrow-right.svg").replace("\\", "/"))
+        qss = qss.replace("{arrow_down}", resource_path("img/arrow-down.svg").replace("\\", "/"))
+        qss = qss.replace("{arrow_right_selected}", resource_path("img/arrow-right-selected.svg").replace("\\", "/"))
+        qss = qss.replace("{arrow_down_selected}", resource_path("img/arrow-down-selected.svg").replace("\\", "/"))
+        app.setStyleSheet(qss)
     except OSError:
         pass
 
