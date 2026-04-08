@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Finch is an open-source, cross-platform GUI client for Amazon S3 and S3-compatible storage platforms, built with Python and PyQt5.
+Finch is an open-source, cross-platform GUI client for Amazon S3 and S3-compatible storage platforms, built with Python and PySide6.
 
 ## Development Setup
 
@@ -37,29 +37,36 @@ cx_Freeze configuration lives in `pyproject.toml` under `[tool.cxfreeze]`.
 
 ## Architecture
 
-The `finch/` package is organized as a set of PyQt5 windows and background threads:
+The `finch/` package is organized into feature-based sub-packages using PySide6 and asyncio (`PySide6.QtAsyncio`):
 
-- **`__main__.py`** — `MainWindow(QMainWindow)`: the application shell. Hosts toolbars, a `QTreeWidget` for browsing buckets/folders/files, and dispatches to all other windows. All core S3 interactions (list buckets, upload, download, delete, presigned URLs, etc.) live here.
-- **`common.py`** — Shared infrastructure:
-  - `s3_session` — a **global** `boto3.session.Session()` singleton used by every module. Credentials are applied to it at login.
-  - `CONFIG_PATH` — `~/.config/finch` (credentials JSON stored here).
-  - `resource_path()` — resolves asset paths in both development and frozen (cx_Freeze) builds.
-  - `ObjectType` enum — `BUCKET`, `FOLDER`, `FILE` used as display-role data in the tree.
-  - `StringUtils` — static formatting helpers (file size, datetime, object name).
-- **`credentials.py`** — `CredentialsManager` loads credentials from `credentials.json`; secrets (access keys) are stored via `keyring`. `ManageCredentialsWindow` is the UI for CRUD on credentials.
-- **`filelist.py`** — `S3FileListFetchThread(QThread)`: async thread that lists S3 objects and emits `file_list_fetched` signal. Keeps the UI non-blocking during directory expansion.
-- **`upload.py`** / **`download.py`** — `S3Uploader`/`UploadDialog` and `MultiDownloadProgressDialog`: threaded upload/download with progress tracking.
-- **`cors.py`** / **`acl.py`** — `CORSWindow` / `ACLWindow`: standalone `QWidget` windows for per-bucket CORS and ACL management.
-- **`error.py`** — `ErrorDialog` and `show_error_dialog()` helper for consistent error display with optional traceback.
-- **`widgets/search.py`** — `SearchWidget`: in-tree search UI.
-- **`about.py`** — `AboutWindow`.
+- **`__main__.py`** — application entry point.
+- **`config.py`** — `CONFIG_PATH` (`~/.config/finch`) and `resource_path()` for resolving assets in dev and frozen (cx_Freeze) builds.
+- **`browser/`** — main browser UI:
+  - `window.py` — `MainWindow(QMainWindow)`: application shell with toolbar and `QTreeWidget` for buckets/folders/files.
+  - `model.py` — `ObjectType` enum (`BUCKET`, `FOLDER`, `FILE`) used as display-role data in the tree.
+  - `about.py` — `AboutWindow`.
+  - `widgets/search.py` — `SearchWidget`: in-tree search UI.
+  - `widgets/spinner.py` — loading spinner widget.
+  - `widgets/toolbars.py` — toolbar definitions.
+- **`s3/service.py`** — `S3Service`: wraps boto3, replaces the old global `s3_session` singleton. All S3 operations go through this class.
+- **`settings/`** — settings dialog and pages:
+  - `settings_dialog.py` — `SettingsDialog` container.
+  - `credentials/` — `CredentialsManager`, `CredentialsModel`, credentials page. Secrets stored via `keyring`.
+  - `ui_settings/` — UI preferences page.
+  - `log_settings/` — logging configuration page.
+- **`transfers/upload.py`** / **`transfers/download.py`** — `UploadDialog` and `MultiDownloadProgressDialog` with async progress tracking.
+- **`tools/cors.py`** / **`tools/acl.py`** — `CORSWindow` / `ACLWindow`: per-bucket CORS and ACL management.
+- **`utils/error.py`** — `ErrorDialog` and `show_error_dialog()`.
+- **`utils/text.py`** — formatting helpers (file size, datetime, object name).
+- **`utils/dialogs.py`** — shared dialog utilities.
+- **`utils/ui.py`** — UI helpers including `apply_theme()` for dark mode (macOS/Linux only).
 
 ### Key Conventions
 
-- **QTreeWidget column layout**: column 4 (`Qt.UserRole`) holds the bucket name; column 5 (`Qt.UserRole`) holds the full S3 object key. Helper methods `get_bucket_name_from_selected_item()` and `get_object_key_from_selected_item()` in `MainWindow` abstract this.
-- **Dark theme**: applied on macOS/Linux via `apply_theme()` in `common.py`; skipped on Windows due to colour incompatibilities.
-- **S3 operations** always go through `s3_session.resource` or `s3_session.resource.meta.client` — never create new sessions per-call.
-- **Image assets** live in `finch/img/` (PNG and SVG); always loaded through `resource_path()`.
+- **QTreeWidget column layout**: column 4 (`Qt.UserRole`) holds the bucket name; column 5 (`Qt.UserRole`) holds the full S3 object key.
+- **Dark theme**: applied on macOS/Linux via `apply_theme()` in `utils/ui.py`; skipped on Windows.
+- **S3 operations** always go through `S3Service` — never instantiate boto3 sessions per-call.
+- **Image assets** live in `finch/img/` (PNG and SVG); always loaded through `resource_path()` from `config.py`.
 
 # General Coding Approach 
 ## Approach

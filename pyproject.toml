@@ -7,8 +7,8 @@ authors = [
 ]
 dependencies = [
     "PySide6>=6.7",
-    "boto3==1.35.5",
-    "keyring==25.3.0",
+    "boto3==1.42.83",
+    "keyring==25.7.0",
     "python-slugify==8.0.4",
 ]
 readme = "README.md"
@@ -28,11 +28,17 @@ classifiers = [
 ]
 
 
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-mock>=3"]
+
 [project.urls]
 Homepage = "https://github.com/mantis-software-company/finch"
 
 [project.scripts]
 finch = "finch.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages]
 find = {}

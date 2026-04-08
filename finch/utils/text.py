@@ -6,8 +6,8 @@ from finch.config import app_settings
 
 def key_display_name(key: str) -> str:
     """Return the last path segment of an S3 key for display."""
-    parts = key.split('/')
-    return parts[-1] if parts[-1] else parts[-2]
+    parts = [p for p in key.split('/') if p]
+    return parts[-1] if parts else ''
 
 
 def format_datetime(dt: datetime) -> str:

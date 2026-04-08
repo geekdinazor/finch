@@ -10,8 +10,10 @@ Open source and cross-platform GUI client for Amazon S3 and compatible storage p
 - Use cross-platform secure secret key storage
 - Browse and manage your S3 buckets and objects in file tree
 - Delete folders and buckets recursively
-- Upload and download files
+- Upload and download multiple files
 - Searching buckets & objects
+- CORS and ACL configuration per bucket
+- Get presigned download URLs
 - More features, soon
 
 ## Installation
@@ -47,6 +49,6 @@ S3 Client was created by [Furkan Kalkan](https://github.com/geekdinazor).
 We also want to give credit to the following open source libraries used in this project:
 
 - [boto3](https://pypi.org/project/boto3/)
-- [pyqt5](https://pypi.org/project/PyQt5/)
+- [PySide6](https://pypi.org/project/PySide6/)
 - [keyring](https://pypi.org/project/keyring/)
 - [python-slugify](https://pypi.org/project/python-slugify/)
