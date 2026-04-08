@@ -1,0 +1,1 @@
+from finch.settings.log_settings.page import LoggingPage

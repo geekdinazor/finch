@@ -1,9 +1,13 @@
-from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QGroupBox, QTableWidget, \
+import asyncio
+
+from PySide6.QtGui import QFont
+from finch.utils import async_slot
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QGroupBox, QTableWidget, \
     QTableWidgetItem, QComboBox, QPushButton, QHeaderView, QHBoxLayout, QLabel, QFrame, QMessageBox
 
-from finch.common import center_window, s3_session
-from finch.error import show_error_dialog
+from finch.utils.ui import center_window
+from finch.s3 import s3_service
+from finch.utils.error import show_error_dialog
 
 ALL_USER_GROUP_URI = 'http://acs.amazonaws.com/groups/global/AllUsers'
 AUTHENTICATED_USER_GROUP_URI = 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
@@ -122,10 +126,15 @@ class ACLWindow(QWidget):
         if selected_row >= 0:
             self.fine_grained_permission_table.removeRow(selected_row)
 
-    def load_acl_rules(self):
-        acl = s3_session.resource.meta.client.get_bucket_acl(Bucket=self.bucket_name)
-        self.bucket_owner_input.setText(acl['Owner']['ID'])
-        self.bucket_owner_displayname_label.setText(acl['Owner']['DisplayName'])
+    @async_slot
+    async def load_acl_rules(self):
+        try:
+            acl = await asyncio.to_thread(s3_service.get_bucket_acl, self.bucket_name)
+        except Exception as e:
+            show_error_dialog(e, show_traceback=True)
+            return
+        self.bucket_owner_input.setText(acl['Owner'].get('ID', ''))
+        self.bucket_owner_displayname_label.setText(acl['Owner'].get('DisplayName', ''))
         if 'Grants' in acl:
             for grant in acl['Grants']:
                 if grant['Grantee']['Type'] == 'CanonicalUser':
@@ -154,45 +163,25 @@ class ACLWindow(QWidget):
 
         return True
 
-    def save_acl_rules(self) -> None:
-        """Save ACL rules to the S3 bucket."""
+    @async_slot
+    async def save_acl_rules(self) -> None:
         if not self.validate_acl_rules():
             return
-
-        owner = {
-            'ID': self.bucket_owner_input.text().strip(),
-        }
-
+        owner = {'ID': self.bucket_owner_input.text().strip()}
         grants = []
         for row in range(self.fine_grained_permission_table.rowCount()):
             grantee_type = self.fine_grained_permission_table.cellWidget(row, 0).currentText()
             grantee_id_uri = self.fine_grained_permission_table.cellWidget(row, 1).currentText().strip()
             permission = self.fine_grained_permission_table.cellWidget(row, 2).currentText()
-
-            grantee = {
-                'Type': 'CanonicalUser' if grantee_type == 'Canonical User' else 'Group'
-            }
-
+            grantee = {'Type': 'CanonicalUser' if grantee_type == 'Canonical User' else 'Group'}
             if grantee['Type'] == 'CanonicalUser':
                 grantee['ID'] = grantee_id_uri
-            else:  # Group
+            else:
                 grantee['URI'] = grantee_id_uri
-
-            grants.append({
-                'Grantee': grantee,
-                'Permission': permission
-            })
-
-        acl = {
-            'Owner': owner,
-            'Grants': grants
-        }
-
+            grants.append({'Grantee': grantee, 'Permission': permission})
+        acl = {'Owner': owner, 'Grants': grants}
         try:
-            s3_session.resource.meta.client.put_bucket_acl(
-                Bucket=self.bucket_name,
-                AccessControlPolicy=acl
-            )
+            await asyncio.to_thread(s3_service.put_bucket_acl, self.bucket_name, acl)
             QMessageBox.information(self, "Success", "ACL configuration saved successfully")
         except Exception as e:
             show_error_dialog(e, show_traceback=True, extra_info=f"ACL Rule JSON: {acl}")

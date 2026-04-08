@@ -6,7 +6,7 @@ authors = [
     {name = "Furkan Kalkan", email = "furkankalkan@mantis.com.tr"},
 ]
 dependencies = [
-    "PyQt5==5.15.11",
+    "PySide6>=6.7",
     "boto3==1.35.5",
     "keyring==25.3.0",
     "python-slugify==8.0.4",
@@ -38,7 +38,7 @@ finch = "finch.__main__:main"
 find = {}
 
 [tool.setuptools.package-data]
-"finch" = ["img/*.png", "img/*.svg"]
+"finch" = ["img/*.png", "img/*.svg", "img/*.qss"]
 
 
 [tool.cxfreeze]
@@ -49,11 +49,16 @@ executables = [
 
 [tool.cxfreeze.build_exe]
 include_msvcr = true
+include_files = [
+    ["finch/img/theme.qss", "lib/finch/img/theme.qss"],
+]
 excludes = [
     "tkinter",
     "unittest",
     "pydoc",
     ]
+
+zip_include_packages = ["encodings", "PySide6", "shiboken6"]
 
 includes = [
     'keyring.backends.SecretService',
@@ -61,8 +66,8 @@ includes = [
     'keyring.backends.chainer',
     'keyring.backends.Windows',
     'keyring.backends.kwallet',
-    'keyring.backends.macOS'
-    ]
+    'keyring.backends.macOS',
+]
 
 [tool.cxfreeze.bdist_mac]
 iconfile = "icon.png"

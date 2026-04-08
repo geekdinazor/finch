@@ -1,13 +1,18 @@
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QMessageBox, QGroupBox, QFormLayout, QLineEdit,
-                             QListWidget, QListWidgetItem, QCheckBox, QTextEdit,
-                             QLabel)
+import asyncio
+
+from PySide6.QtCore import Qt
+from finch.utils import async_slot
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+                               QMessageBox, QGroupBox, QFormLayout, QLineEdit,
+                               QListWidget, QListWidgetItem, QCheckBox, QTextEdit,
+                               QLabel)
 from botocore.exceptions import ClientError
 
-from finch.common import s3_session, center_window, resource_path, StringUtils
-from finch.error import show_error_dialog
+from finch.s3 import s3_service
+from finch.utils.ui import center_window, resource_path
+from finch.utils.text import format_datetime, format_size, format_list_with_conjunction
+from finch.utils.error import show_error_dialog
 
 
 class CORSWindow(QWidget):
@@ -42,7 +47,7 @@ class CORSWindow(QWidget):
         self.allowed_origins_input.setMaximumHeight(80)
         rule_layout.addRow("Allowed Origins:", self.allowed_origins_input)
         help_label = QLabel("Enter * or http://example.com\nOne origin per line")
-        help_label.setStyleSheet("QLabel { font-size: 11px; font-style: italic; color: #666; }")
+        help_label.setObjectName("help")
         rule_layout.addRow("", help_label)
 
         # Methods as checkboxes
@@ -60,20 +65,20 @@ class CORSWindow(QWidget):
         self.allowed_headers_input.setMaximumHeight(80)
         rule_layout.addRow("Allowed Headers:", self.allowed_headers_input)
         help_label = QLabel("Enter * or specific headers\nOne header per line")
-        help_label.setStyleSheet("QLabel { font-size: 11px; font-style: italic; color: #666; }")
+        help_label.setObjectName("help")
         rule_layout.addRow("", help_label)
 
         self.expose_headers_input = QTextEdit()
         self.expose_headers_input.setMaximumHeight(80)
         rule_layout.addRow("Expose Headers:", self.expose_headers_input)
         help_label = QLabel("Enter headers to expose\nOne header per line")
-        help_label.setStyleSheet("QLabel { font-size: 11px; font-style: italic; color: #666; }")
+        help_label.setObjectName("help")
         rule_layout.addRow("", help_label)
 
         self.max_age_input = QLineEdit()
         rule_layout.addRow("Max Age (seconds):", self.max_age_input)
         help_label = QLabel("Enter maximum age in seconds")
-        help_label.setStyleSheet("QLabel { font-size: 11px; font-style: italic; color: #666; }")
+        help_label.setObjectName("help")
         rule_layout.addRow("", help_label)
 
         # Add buttons to form
@@ -120,30 +125,23 @@ class CORSWindow(QWidget):
         # Load existing CORS configuration
         self.load_cors_config()
 
-    def load_cors_config(self):
-        """Load existing CORS configuration for the bucket"""
+    @async_slot
+    async def load_cors_config(self):
         try:
-            response = s3_session.resource.meta.client.get_bucket_cors(Bucket=self.bucket_name)
-            rules = response.get('CORSRules', [])
-            
-            for rule in rules:
-                item = QListWidgetItem(self._format_rule_display(
-                    rule['AllowedMethods'],
-                    rule['AllowedOrigins']
-                ))
-                item.setData(Qt.UserRole, rule)
-                self.rules_list.addItem(item)
-            
-            # Select first rule if any exist
-            if self.rules_list.count() > 0:
-                self.rules_list.setCurrentRow(0)
-
+            rules = await asyncio.to_thread(s3_service.get_bucket_cors, self.bucket_name)
         except ClientError as e:
-            if e.response['Error']['Code'] == 'NoSuchCORSConfiguration':
-                # No CORS configuration exists yet
-                pass
-            else:
+            if e.response['Error']['Code'] != 'NoSuchCORSConfiguration':
                 show_error_dialog(str(e))
+            return
+        for rule in rules:
+            item = QListWidgetItem(self._format_rule_display(
+                rule['AllowedMethods'],
+                rule['AllowedOrigins']
+            ))
+            item.setData(Qt.UserRole, rule)
+            self.rules_list.addItem(item)
+        if self.rules_list.count() > 0:
+            self.rules_list.setCurrentRow(0)
 
     def show_rule_details(self, item_or_row):
         """Show details of selected rule"""
@@ -192,8 +190,8 @@ class CORSWindow(QWidget):
 
     def _format_rule_display(self, methods, origins):
         """Format CORS rules to display in the list"""
-        methods_text = StringUtils.format_list_with_conjunction(methods)
-        origins_text = StringUtils.format_list_with_conjunction(['anywhere' if o == '*' else o for o in origins])
+        methods_text = format_list_with_conjunction(methods)
+        origins_text = format_list_with_conjunction(['anywhere' if o == '*' else o for o in origins])
         return f"{methods_text} on {origins_text}"
 
     def save_rule(self):
@@ -281,35 +279,23 @@ class CORSWindow(QWidget):
             else:
                 self._enable_form(False)
 
-    def apply_cors(self):
-        """Apply CORS configuration to bucket"""
+    @async_slot
+    async def apply_cors(self):
         try:
             rules = []
-            
-            # Update the current rule if one is selected
             current_item = self.rules_list.currentItem()
             if current_item:
                 updated_rule = self._get_rule_from_form()
                 if updated_rule:
                     current_item.setData(Qt.UserRole, updated_rule)
-                    current_item.setText(f"{StringUtils.format_list_with_conjunction(updated_rule['AllowedMethods'])} on {', '.join(updated_rule['AllowedOrigins'])}")
-
-            # Collect all rules
+                    current_item.setText(
+                        f"{format_list_with_conjunction(updated_rule['AllowedMethods'])} on "
+                        f"{', '.join(updated_rule['AllowedOrigins'])}"
+                    )
             for i in range(self.rules_list.count()):
                 rules.append(self.rules_list.item(i).data(Qt.UserRole))
-
-            if rules:
-                s3_session.resource.meta.client.put_bucket_cors(
-                    Bucket=self.bucket_name,
-                    CORSConfiguration={
-                        'CORSRules': rules
-                    }
-                )
-            else:
-                s3_session.resource.meta.client.delete_bucket_cors(Bucket=self.bucket_name)
-            
+            await asyncio.to_thread(s3_service.put_bucket_cors, self.bucket_name, rules)
             QMessageBox.information(self, "Success", "CORS configuration applied successfully")
-            
         except Exception as e:
             show_error_dialog(e, show_traceback=True)
 

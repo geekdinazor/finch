@@ -1,0 +1,1 @@
+from finch.settings.ui_settings.page import UISettingsPage
