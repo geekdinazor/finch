@@ -20,7 +20,7 @@ class TestS3DownloadItem:
             destination="/tmp",
             filename="",
         )
-        assert item.filename == "my-bucket_folder_sub_file.txt"
+        assert item.filename == "file.txt"
 
     def test_filename_root_key(self):
         item = S3DownloadItem(
@@ -29,7 +29,7 @@ class TestS3DownloadItem:
             destination="/tmp",
             filename="",
         )
-        assert item.filename == "my-bucket_file.txt"
+        assert item.filename == "file.txt"
 
     def test_filename_preserves_extension(self):
         item = S3DownloadItem(
@@ -38,7 +38,7 @@ class TestS3DownloadItem:
             destination="/tmp",
             filename="",
         )
-        assert item.filename.endswith(".csv")
+        assert item.filename == "report.csv"
 
     def test_initial_status_pending(self):
         item = S3DownloadItem(bucket_name="b", key="f.txt", destination="/tmp", filename="")

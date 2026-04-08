@@ -29,13 +29,7 @@ class S3DownloadItem:
     speed: float = 0.0
 
     def __post_init__(self):
-        base_name = os.path.basename(self.key)
-        name, ext = os.path.splitext(base_name)
-        if '/' in self.key:
-            path_hash = self.key.replace('/', '_').rsplit('.', 1)[0]
-            self.filename = f"{self.bucket_name}_{path_hash}{ext}"
-        else:
-            self.filename = f"{self.bucket_name}_{name}{ext}"
+        self.filename = os.path.basename(self.key)
 
 
 class DownloadProgressWidget(QWidget):
