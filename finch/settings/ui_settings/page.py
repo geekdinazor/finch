@@ -35,6 +35,17 @@ class UISettingsPage(QWidget):
         hint.setContentsMargins(20, 0, 0, 0)
         layout.addWidget(hint)
 
+        self.native_file_icons = QCheckBox("Use native file type icons")
+        self.native_file_icons.setChecked(app_settings.native_file_icons)
+        layout.addWidget(self.native_file_icons)
+
+        hint2 = QLabel("Creates a temporary file per unique extension to resolve the OS icon. "
+                        "May cause performance issues with a large number of distinct file types.")
+        hint2.setObjectName("hint")
+        hint2.setContentsMargins(20, 0, 0, 0)
+        hint2.setWordWrap(True)
+        layout.addWidget(hint2)
+
         self._section(layout, "Date / Time")
 
         current = app_settings.datetime_format
@@ -70,6 +81,7 @@ class UISettingsPage(QWidget):
 
     def save(self):
         app_settings.check_folder_contents = self.check_folder_contents.isChecked()
+        app_settings.native_file_icons = self.native_file_icons.isChecked()
         fmt = self.dt_combo.currentData()
         app_settings.datetime_format = (self.custom_dt.text() or app_settings.datetime_format) if fmt is None else fmt
         app_settings.save()

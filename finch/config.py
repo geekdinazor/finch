@@ -21,6 +21,7 @@ class Settings:
     """Application settings with load/save/apply_logging lifecycle."""
 
     check_folder_contents: bool = True
+    native_file_icons:     bool = True
     datetime_format:       str  = "%d %b %Y %H:%M"
 
     logging_enabled: bool = False
@@ -44,6 +45,7 @@ class Settings:
         except (FileNotFoundError, json.JSONDecodeError):
             return
         self.check_folder_contents = bool(data.get("check_folder_contents", self.check_folder_contents))
+        self.native_file_icons     = bool(data.get("native_file_icons", self.native_file_icons))
         self.datetime_format       = data.get("datetime_format", self.datetime_format)
         self.logging_enabled       = bool(data.get("logging_enabled", self.logging_enabled))
         self.logging_to_file       = bool(data.get("logging_to_file", self.logging_to_file))
@@ -54,6 +56,7 @@ class Settings:
         with open(SETTINGS_FILE, "w") as f:
             json.dump({
                 "check_folder_contents": self.check_folder_contents,
+                "native_file_icons":     self.native_file_icons,
                 "datetime_format":       self.datetime_format,
                 "logging_enabled":       self.logging_enabled,
                 "logging_to_file":       self.logging_to_file,

@@ -1,9 +1,11 @@
 import asyncio
+import os
+import tempfile
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from PySide6.QtCore import Signal, Qt, QModelIndex, QAbstractItemModel
-from PySide6.QtWidgets import QApplication, QStyle
+from PySide6.QtCore import Signal, Qt, QModelIndex, QAbstractItemModel, QFileInfo
+from PySide6.QtWidgets import QFileIconProvider
 
 from finch.s3 import s3_service, S3Object
 from finch.config import ObjectType, app_settings
@@ -33,12 +35,10 @@ class S3FileTreeModel(QAbstractItemModel):
         super().__init__(parent)
         self._root = S3Node(s3_object=None)
         self._active_loads: int = 0
-        style = QApplication.style()
-        self._icons = {
-            ObjectType.FILE: style.standardIcon(QStyle.SP_FileIcon),
-            ObjectType.FOLDER: style.standardIcon(QStyle.SP_DirIcon),
-            ObjectType.BUCKET: style.standardIcon(QStyle.SP_DirIcon),
-        }
+        self._icon_provider = QFileIconProvider()
+        self._icon_cache: dict = {}
+        self._folder_icon = self._icon_provider.icon(QFileIconProvider.IconType.Folder)
+        self._bucket_icon = self._icon_provider.icon(QFileIconProvider.IconType.Drive)
 
     # ── Core QAbstractItemModel interface ──────────────────────────────────
 
@@ -85,7 +85,7 @@ class S3FileTreeModel(QAbstractItemModel):
             if col == 3:
                 return format_datetime(obj.last_modified)
         elif role == Qt.DecorationRole and col == 0:
-            return self._icons.get(obj.type)
+            return self._get_icon(obj)
         elif role == Qt.UserRole:
             return node
         return None
@@ -253,6 +253,25 @@ class S3FileTreeModel(QAbstractItemModel):
                 if result:
                     return result
         return None
+
+    # ── Icon resolution ────────────────────────────────────────────────────
+
+    def _get_icon(self, obj: S3Object):
+        if obj.type == ObjectType.BUCKET:
+            return self._bucket_icon
+        if obj.type == ObjectType.FOLDER:
+            return self._folder_icon
+        if not app_settings.native_file_icons:
+            return self._icon_provider.icon(QFileIconProvider.IconType.File)
+        ext = os.path.splitext(obj.name)[1].lower() or '.bin'
+        if ext not in self._icon_cache:
+            fd, tmp = tempfile.mkstemp(suffix=ext)
+            os.close(fd)
+            try:
+                self._icon_cache[ext] = self._icon_provider.icon(QFileInfo(tmp))
+            finally:
+                os.unlink(tmp)
+        return self._icon_cache[ext]
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
